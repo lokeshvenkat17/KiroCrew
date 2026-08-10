@@ -249,6 +249,8 @@ Kiro Crew runs on macOS, Linux (x86_64 and ARM), and Windows (native). `fcntl`,
 | FD soft limit | `raise_nofile_soft_limit(n)` | `resource.setrlimit` |
 | Port to PID | `find_listening_pids(port)` / `listening_pid_tool_available()` | `lsof` directly |
 | Spawn a system tool (`ps`, `lsof`, `netstat`, `taskkill`) | `trusted_system_bin(name)`, treating `None` as "unavailable" | a bare argv name (resolved through a `PATH` that can lead with same-uid-writable dirs) |
+| Filesystem roots / drive list | `filesystem_roots()` / `is_filesystem_root(path)` | assuming `/` is the only root (Windows has one root per drive) |
+| Hidden/system dir entry | `entry_is_hidden_or_system(entry)` | `name.startswith(".")` alone (Windows marks by attribute) |
 | strftime no-pad | `strftime(dt, "%-I")` | bare `dt.strftime("%-I")` (`ValueError` on Windows) |
 
 Verify process, signal, file-lock, and metrics changes on macOS + Linux. Frontend:

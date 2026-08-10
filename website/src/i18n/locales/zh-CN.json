@@ -5227,7 +5227,8 @@
       "search_recent_projects": "搜索最近项目",
       "search_recent_projects_2": "搜索最近项目…",
       "select": "选择",
-      "subdirectories": "子目录"
+      "subdirectories": "子目录",
+      "this_pc": "这台电脑"
     },
     "publishHub": {
       "back": "返回",
@@ -5983,6 +5984,7 @@
       "path_to_project": "/path/to/project",
       "project_directory_path": "项目目录路径",
       "select": "选择",
+      "this_pc": "这台电脑",
       "workspace_name": "工作区名称",
       "workspace_name_2": "workspace-name"
     },

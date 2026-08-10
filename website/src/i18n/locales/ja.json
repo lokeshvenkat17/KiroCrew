@@ -5227,7 +5227,8 @@
       "search_recent_projects": "最近のプロジェクトを検索",
       "search_recent_projects_2": "最近のプロジェクトを検索…",
       "select": "選択",
-      "subdirectories": "サブディレクトリ"
+      "subdirectories": "サブディレクトリ",
+      "this_pc": "この PC"
     },
     "publishHub": {
       "back": "戻る",
@@ -5983,6 +5984,7 @@
       "path_to_project": "/path/to/project",
       "project_directory_path": "プロジェクトディレクトリパス",
       "select": "選択",
+      "this_pc": "この PC",
       "workspace_name": "ワークスペース名",
       "workspace_name_2": "workspace-name"
     },

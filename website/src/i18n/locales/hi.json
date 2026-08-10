@@ -5308,7 +5308,8 @@
       "search_recent_projects": "हाल के प्रोजेक्ट खोजें",
       "search_recent_projects_2": "हाल के प्रोजेक्ट खोजें…",
       "select": "चुनें",
-      "subdirectories": "सब-डायरेक्टरी"
+      "subdirectories": "सब-डायरेक्टरी",
+      "this_pc": "यह पीसी"
     },
     "publishHub": {
       "back": "वापस",
@@ -6068,6 +6069,7 @@
       "path_to_project": "/path/to/project",
       "project_directory_path": "प्रोजेक्ट डायरेक्टरी पथ",
       "select": "चुनें",
+      "this_pc": "यह पीसी",
       "workspace_name": "वर्कस्पेस का नाम",
       "workspace_name_2": "workspace-name"
     },

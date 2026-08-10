@@ -5470,7 +5470,8 @@
       "search_recent_projects": "Поиск по недавним проектам",
       "search_recent_projects_2": "Поиск по недавним проектам…",
       "select": "Выбрать",
-      "subdirectories": "Подкаталоги"
+      "subdirectories": "Подкаталоги",
+      "this_pc": "Этот компьютер"
     },
     "publishHub": {
       "back": "Назад",
@@ -6238,6 +6239,7 @@
       "path_to_project": "/path/to/project",
       "project_directory_path": "Путь к каталогу проекта",
       "select": "Выбрать",
+      "this_pc": "Этот компьютер",
       "workspace_name": "Название рабочей области",
       "workspace_name_2": "workspace-name"
     },

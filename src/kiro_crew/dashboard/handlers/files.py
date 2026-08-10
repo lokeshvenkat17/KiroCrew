@@ -2189,6 +2189,7 @@ async def api_browse_dirs(request: web.Request) -> web.Response:
     """GET /api/browse-dirs?path=... — list subdirectories for directory browser."""
     import os  # noqa: F811
 
+    from kiro_crew import platform_compat
     from kiro_crew.security import is_sensitive_path  # noqa: F811
 
     caller = request.get("user", "dashboard")
@@ -2202,17 +2203,42 @@ async def api_browse_dirs(request: web.Request) -> web.Response:
     skip = {".git", "node_modules", "__pycache__", ".cache", ".venv", "venv", "env", ".kirocrew", ".kiro", ".aim"}
     dirs: list[dict] = []
     try:
-        for entry in sorted(os.scandir(base), key=lambda e: e.name.lower()):
-            if entry.is_dir(follow_symlinks=True) and entry.name not in skip and not entry.name.startswith("."):
-                # Resolve symlinks before the sensitivity check — a symlink in
-                # a benign dir pointing at ~/.aws would otherwise pass through.
-                if is_sensitive_path(os.path.realpath(entry.path)):
-                    continue
-                dirs.append({"name": entry.name, "path": entry.path})
-    except PermissionError:
-        pass
+        entries = sorted(os.scandir(base), key=lambda e: e.name.lower())
+    except OSError:
+        # Unreadable directory (permissions, a drive that went away mid-browse):
+        # an empty listing keeps the browser usable instead of erroring out.
+        entries = []
+    for entry in entries:
+        # Per-ENTRY isolation, not per-directory: on a Windows drive root a
+        # single entry that refuses to stat (System Volume Information, a stale
+        # reparse point) must not blank out every sibling.
+        try:
+            if not entry.is_dir(follow_symlinks=True):
+                continue
+            if entry.name in skip or entry.name.startswith("."):
+                continue
+            if platform_compat.entry_is_hidden_or_system(entry):
+                continue
+            # Resolve symlinks before the sensitivity check — a symlink in
+            # a benign dir pointing at ~/.aws would otherwise pass through.
+            if is_sensitive_path(os.path.realpath(entry.path)):
+                continue
+        except OSError:
+            continue
+        dirs.append({"name": entry.name, "path": entry.path})
+    # Windows has one root per drive with nothing above it, so the browser needs
+    # the drive list to offer a top level; the probe can block on a stale
+    # network mapping, hence the worker thread. POSIX returns just ``/``, which
+    # the frontend treats as "no drives level" — its behavior is unchanged.
+    roots = await asyncio.to_thread(platform_compat.filesystem_roots)
     _sel().log_api_access(caller=caller, operation="browse_dirs", outcome="allowed", resources=base)
-    return web.json_response({"path": base, "parent": os.path.dirname(base), "dirs": dirs})
+    return web.json_response({
+        "path": base,
+        "parent": os.path.dirname(base),
+        "dirs": dirs,
+        "isRoot": platform_compat.is_filesystem_root(base),
+        "roots": [{"name": r, "path": r} for r in roots],
+    })
 
 
 #: Depth ceiling for the walk-up that looks for a repository root. A project

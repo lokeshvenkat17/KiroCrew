@@ -1471,7 +1471,7 @@ export const api = {
       error?: string
     }>,
   recentProjects: () => fetch('/api/recent-projects').then(j) as Promise<{ dirs: string[] }>,
-  browseDirs: (path?: string) => fetch('/api/browse-dirs' + (path ? '?path=' + encodeURIComponent(path) : '')).then(j) as Promise<{ path: string; parent: string; dirs: { name: string; path: string }[] }>,
+  browseDirs: (path?: string) => fetch('/api/browse-dirs' + (path ? '?path=' + encodeURIComponent(path) : '')).then(j) as Promise<{ path: string; parent: string; dirs: { name: string; path: string }[]; isRoot?: boolean; roots?: { name: string; path: string }[] }>,
   browseFiles: (path?: string) => fetch('/api/browse-files' + (path ? '?path=' + encodeURIComponent(path) : '')).then(j) as Promise<{ path: string; parent: string; dirs: { name: string; path: string; mtime: number }[]; files: { name: string; path: string; mtime: number }[] }>,
   projectGit: (path: string) => fetch('/api/project/git?path=' + encodeURIComponent(path)).then(j) as Promise<{ path: string; repo: boolean; repoRoot?: string; branch?: string; detached?: boolean; head?: string }>,
   workspaces: () => fetch('/api/workspaces').then(j),

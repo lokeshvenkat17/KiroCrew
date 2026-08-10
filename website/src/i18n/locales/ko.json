@@ -5227,7 +5227,8 @@
       "search_recent_projects": "최근 프로젝트 검색",
       "search_recent_projects_2": "최근 프로젝트 검색…",
       "select": "선택",
-      "subdirectories": "하위 디렉터리"
+      "subdirectories": "하위 디렉터리",
+      "this_pc": "내 PC"
     },
     "publishHub": {
       "back": "뒤로",
@@ -5983,6 +5984,7 @@
       "path_to_project": "/path/to/project",
       "project_directory_path": "프로젝트 디렉터리 경로",
       "select": "선택",
+      "this_pc": "내 PC",
       "workspace_name": "워크스페이스 이름",
       "workspace_name_2": "workspace-name"
     },

@@ -5308,7 +5308,8 @@
       "search_recent_projects": "সাম্প্রতিক প্রকল্প খুঁজুন",
       "search_recent_projects_2": "সাম্প্রতিক প্রকল্প খুঁজুন…",
       "select": "নির্বাচন করুন",
-      "subdirectories": "সাবডিরেক্টরি"
+      "subdirectories": "সাবডিরেক্টরি",
+      "this_pc": "এই পিসি"
     },
     "publishHub": {
       "back": "পিছনে",
@@ -6068,6 +6069,7 @@
       "path_to_project": "/path/to/project",
       "project_directory_path": "প্রজেক্ট ডিরেক্টরির পাথ",
       "select": "নির্বাচন করুন",
+      "this_pc": "এই পিসি",
       "workspace_name": "ওয়ার্কস্পেসের নাম",
       "workspace_name_2": "workspace-name"
     },

@@ -15,7 +15,9 @@ import errno
 import functools
 import io
 import logging
+import ntpath
 import os
+import posixpath
 import shutil
 import signal
 import stat
@@ -212,6 +214,127 @@ def tcc_prune_walk_dirs(root: str, dirpath: str, dirnames: list[str]) -> list[st
     if at_root:
         return [d for d in dirnames if d not in protected]
     return [d for d in dirnames if d in TCC_LIBRARY_WALKABLE_CHILDREN]
+
+
+# ---------------------------------------------------------------------------
+# Filesystem roots (Windows drives vs the single POSIX root)
+# ---------------------------------------------------------------------------
+
+#: Every drive letter ``GetLogicalDrives`` can report, one per bit (A=bit 0).
+#: Used to decode the bitmask and, on the fallback path, as the probe range —
+#: it is the full alphabet, never a guess at which drives a host has.
+_DRIVE_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+#: Seconds a :func:`filesystem_roots` result stays valid. The enumeration
+#: itself is a cheap in-memory bitmask, but the accessibility probe stats each
+#: candidate, and a STALE MAPPED NETWORK DRIVE can take seconds to answer.
+#: Browsing fires one request per navigation step, so without a short cache a
+#: single dead ``Z:`` mapping would tax every one of them. Time-only
+#: invalidation means a drive plugged in mid-session appears within the TTL.
+_ROOTS_TTL_SECS = 5.0
+
+#: ``(monotonic_deadline, roots)`` — module-level cache for the above.
+_roots_cache: tuple[float, list[str]] | None = None
+
+
+def _windows_drive_roots() -> list[str]:
+    """Candidate Windows drive roots (``C:\\``, ``D:\\``, …), unfiltered.
+
+    Reads the ``GetLogicalDrives`` bitmask, which is an in-memory kernel query
+    that touches no device — so a disconnected or spun-down drive is reported
+    here without any I/O wait, and accessibility is decided by the caller's
+    probe. Falls back to the full A-Z candidate list when ctypes cannot reach
+    kernel32, which costs the caller 26 probes instead of a handful but never
+    assumes a particular drive letter exists.
+    """
+    try:
+        mask = int(ctypes.windll.kernel32.GetLogicalDrives())  # type: ignore[attr-defined]
+    except (AttributeError, OSError, ValueError):
+        logger.debug("GetLogicalDrives unavailable; falling back to A-Z probing")
+        return [f"{letter}:\\" for letter in _DRIVE_LETTERS]
+    return [f"{letter}:\\" for i, letter in enumerate(_DRIVE_LETTERS) if mask & (1 << i)]
+
+
+def filesystem_roots() -> list[str]:
+    """Return the accessible filesystem roots, in ascending order.
+
+    Windows has ONE ROOT PER DRIVE and no path above them
+    (``os.path.dirname("C:\\")`` is ``"C:\\"`` itself), so a directory browser
+    that only walks up parents can never leave the drive it started on. This is
+    the discovery mechanism for that missing top level: on Windows the drive
+    letters the kernel reports, on POSIX the single ``/``.
+
+    Drives are DISCOVERED, never hardcoded, and each candidate must answer
+    ``os.path.isdir`` to be returned — so an empty card reader, an ejected
+    removable drive, or a disconnected network mapping is dropped rather than
+    offered and then failing on click. That probe can block on a stale mapping,
+    so callers on an event loop MUST run this in a worker thread; results are
+    cached for :data:`_ROOTS_TTL_SECS` to keep rapid navigation off the probe.
+
+    Returns an empty list only if every candidate is inaccessible — never
+    raises, because a browser losing its root list must degrade to "no drives
+    listed", not fail the request.
+    """
+    global _roots_cache
+    now = time.monotonic()
+    cached = _roots_cache
+    if cached is not None and cached[0] > now:
+        return list(cached[1])
+
+    if IS_POSIX:
+        candidates = [posixpath.sep]
+    else:
+        candidates = _windows_drive_roots()
+
+    roots: list[str] = []
+    for candidate in candidates:
+        try:
+            if os.path.isdir(candidate):
+                roots.append(candidate)
+        except OSError:
+            # A drive that errors on stat (permission, hardware, dead mapping)
+            # is not selectable, so it is simply not offered.
+            continue
+
+    _roots_cache = (now + _ROOTS_TTL_SECS, list(roots))
+    return roots
+
+
+def is_filesystem_root(path: str) -> bool:
+    """Return True if *path* has no parent directory.
+
+    ``dirname`` returns its own input at a root, so this one test covers POSIX
+    ``/``, a Windows drive root (``D:\\``) and a UNC share root
+    (``\\\\server\\share\\``). The path flavour is chosen from the PLATFORM, not
+    from the string: a backslash path is only a Windows path when the gateway is
+    actually running on Windows, and naming the module explicitly is what lets
+    the Windows semantics be tested from a POSIX host.
+    """
+    if not path:
+        return False
+    module = ntpath if IS_WINDOWS else posixpath
+    return module.dirname(path) == path
+
+
+def entry_is_hidden_or_system(entry: os.DirEntry[str]) -> bool:
+    """Return True for a Windows hidden/system directory entry.
+
+    Windows marks these with file ATTRIBUTES rather than a leading dot, so a
+    dot-prefix filter leaves ``$RECYCLE.BIN``, ``System Volume Information`` and
+    friends cluttering every drive root. Always False on POSIX, where hiding is
+    purely a naming convention the caller already handles.
+
+    An entry whose attributes cannot be read is reported as NOT hidden: the
+    caller's own sensitivity and permission checks still apply, and silently
+    dropping an unreadable entry would hide real project directories.
+    """
+    if IS_POSIX:
+        return False
+    try:
+        attrs = entry.stat(follow_symlinks=False).st_file_attributes
+    except (OSError, AttributeError):
+        return False
+    return bool(attrs & (stat.FILE_ATTRIBUTE_HIDDEN | stat.FILE_ATTRIBUTE_SYSTEM))
 
 
 def ensure_utf8_console() -> None:

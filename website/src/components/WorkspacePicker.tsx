@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback, RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import { FolderOpen, ChevronRight, ChevronLeft } from 'lucide-react'
+import { FolderOpen, ChevronRight, ChevronLeft, HardDrive, MonitorSmartphone } from 'lucide-react'
 import { api } from '../api/client'
+import { lastSegment, stripTrailingSep } from '../utils/fsPaths'
 
 import { i18nT } from '../i18n/t'
 interface Props {
@@ -16,6 +17,11 @@ export default function WorkspacePicker({ open, onOpenChange, anchorRef, onCreat
   const [browsePath, setBrowsePath] = useState('')
   const [browseParent, setBrowseParent] = useState('')
   const [browseDirs, setBrowseDirs] = useState<{ name: string; path: string }[]>([])
+  // Filesystem roots reported by the gateway (one per accessible Windows drive,
+  // or the single POSIX `/`), plus whether the current listing is one of them.
+  const [fsRoots, setFsRoots] = useState<{ name: string; path: string }[]>([])
+  const [atRoot, setAtRoot] = useState(false)
+  const [showRoots, setShowRoots] = useState(false)
   const [selectedDir, setSelectedDir] = useState('')
   const [wsName, setWsName] = useState('')
   const [error, setError] = useState('')
@@ -28,6 +34,9 @@ export default function WorkspacePicker({ open, onOpenChange, anchorRef, onCreat
       setBrowsePath(d.path)
       setBrowseParent(d.parent)
       setBrowseDirs(d.dirs)
+      setFsRoots(d.roots || [])
+      setAtRoot(!!d.isRoot)
+      setShowRoots(false)
       setInput(d.path)
     }).catch(() => {})
   }, [])
@@ -60,7 +69,9 @@ export default function WorkspacePicker({ open, onOpenChange, anchorRef, onCreat
 
   const selectDir = (dir: string) => {
     setSelectedDir(dir)
-    setWsName(dir.split('/').filter(Boolean).pop() || '')
+    // Derive the default workspace name from the final path segment, split on
+    // whichever separator the path actually uses (`D:\proj` -> `proj`).
+    setWsName(lastSegment(stripTrailingSep(dir)))
     setInput(dir)
     setError('')
   }
@@ -81,7 +92,12 @@ export default function WorkspacePicker({ open, onOpenChange, anchorRef, onCreat
   if (!open || !btnRef.current) return null
 
   const q = input.toLowerCase()
-  const filteredBrowse = q && q !== browsePath.toLowerCase() ? browseDirs.filter(d => d.name.toLowerCase().includes(q.split('/').pop() || '') || d.path.toLowerCase().includes(q)) : browseDirs
+  const filteredBrowse = q && q !== browsePath.toLowerCase() ? browseDirs.filter(d => d.name.toLowerCase().includes(lastSegment(q)) || d.path.toLowerCase().includes(q)) : browseDirs
+  // More than one filesystem root means a root-per-drive host (Windows): a drive
+  // root has no parent, so the drives level is the only way to reach a sibling
+  // drive. POSIX reports the single `/` and this affordance never appears.
+  const hasDrivesLevel = fsRoots.length > 1
+  const visibleItems = showRoots ? fsRoots : filteredBrowse
 
   return createPortal(
         <div ref={dropRef} className="fixed z-[9999] bg-card border border-border rounded-lg shadow-lg w-[400px] max-h-[460px] flex flex-col overflow-hidden animate-slide-up" style={(() => { const r = btnRef.current!.getBoundingClientRect(); const maxH = window.innerHeight - r.bottom - 8; return { top: r.bottom + 4, left: Math.max(8, r.right - 400), maxHeight: Math.max(200, maxH) } })()}>
@@ -99,17 +115,19 @@ export default function WorkspacePicker({ open, onOpenChange, anchorRef, onCreat
           ) : (
             <>
               <div className="p-2 border-b border-border flex gap-1 items-center">
-                {browseParent && browseParent !== browsePath && (
+                {showRoots ? null : atRoot && hasDrivesLevel ? (
+                  <button onClick={() => setShowRoots(true)} className="p-1 text-muted hover:text-text rounded hover:bg-bg-hover shrink-0" title={i18nT('components.workspacePicker.this_pc')} aria-label={i18nT('components.workspacePicker.this_pc')}><MonitorSmartphone className="lucide-inline" /></button>
+                ) : browseParent && browseParent !== browsePath ? (
                   <button onClick={() => browse(browseParent)} className="p-1 text-muted hover:text-text rounded hover:bg-bg-hover shrink-0" title={i18nT('components.workspacePicker.back')} aria-label={i18nT('components.workspacePicker.back')}><ChevronLeft size={16} /></button>
-                )}
+                ) : null}
                 <input autoFocus type="text" aria-label={i18nT('components.workspacePicker.project_directory_path')} placeholder={i18nT('components.workspacePicker.path_to_project')} value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && input.trim()) selectDir(input.trim()); if (e.key === 'Escape') onOpenChange(false) }} className="flex-1 bg-bg-elevated border border-border rounded px-2 py-1.5 text-[13px] font-mono text-text placeholder:text-muted focus:outline-none focus:border-accent" />
                 <button onClick={() => selectDir(input.trim() || browsePath)} className="px-2 py-1 text-[11px] bg-accent/20 text-accent rounded hover:bg-accent/30 shrink-0">{i18nT('components.workspacePicker.select')}</button>
               </div>
               <div className="overflow-y-auto flex-1 min-h-0">
-                {filteredBrowse.length === 0 && <div className="px-3 py-4 text-[12px] text-muted text-center">{i18nT('components.workspacePicker.no_subdirectories')}</div>}
-                {filteredBrowse.map(d => (
+                {visibleItems.length === 0 && <div className="px-3 py-4 text-[12px] text-muted text-center">{i18nT('components.workspacePicker.no_subdirectories')}</div>}
+                {visibleItems.map(d => (
                   <button key={d.path} className="w-full text-left px-3 py-1.5 flex items-center gap-2 cursor-pointer hover:bg-bg-hover transition-colors" onClick={() => browse(d.path)}>
-                    <FolderOpen size={12} className="text-accent shrink-0" />
+                    {showRoots ? <HardDrive className="lucide-inline text-accent shrink-0" /> : <FolderOpen size={12} className="text-accent shrink-0" />}
                     <span className="text-[13px] font-mono text-text truncate">{d.name}</span>
                     <ChevronRight size={12} className="text-muted ml-auto shrink-0" />
                   </button>

@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback, RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import { FolderOpen, ChevronRight, ChevronLeft, Clock, Search } from 'lucide-react'
+import { FolderOpen, ChevronRight, ChevronLeft, Clock, Search, HardDrive, MonitorSmartphone } from 'lucide-react'
 import { api } from '../api/client'
 import { useListKeyboardNav } from '../hooks/useListKeyboardNav'
+import { endsWithSep, lastSegment, stripTrailingSep, withTrailingSep } from '../utils/fsPaths'
 
 import { i18nT } from '../i18n/t'
 interface Props {
@@ -19,6 +20,12 @@ export default function ProjectPicker({ open, onOpenChange, anchorRef, anchorRec
   const [browsePath, setBrowsePath] = useState('')
   const [browseParent, setBrowseParent] = useState('')
   const [browseDirs, setBrowseDirs] = useState<{ name: string; path: string }[]>([])
+  // Filesystem roots reported by the gateway: every accessible Windows drive, or
+  // the single `/` on POSIX. `atRoot` marks a listing that has no parent, which
+  // is where the drives level becomes the only way further up.
+  const [fsRoots, setFsRoots] = useState<{ name: string; path: string }[]>([])
+  const [atRoot, setAtRoot] = useState(false)
+  const [showRoots, setShowRoots] = useState(false)
   const [recentDirs, setRecentDirs] = useState<string[]>([])
   const [recentQuery, setRecentQuery] = useState('')
   const [browseSel, setBrowseSel] = useState(0)
@@ -39,21 +46,14 @@ export default function ProjectPicker({ open, onOpenChange, anchorRef, anchorRec
   const browse = useCallback((path?: string, preserveInput = false) => {
     api.browseDirs(path).then(d => {
       setBrowsePath(d.path); setBrowseParent(d.parent); setBrowseDirs(d.dirs); setBrowseSel(0)
+      setFsRoots(d.roots || []); setAtRoot(!!d.isRoot); setShowRoots(false)
       // Append the path delimiter after a browse/drill so the user can start
       // typing the next segment immediately (#1196). Derive the separator from
       // the returned path so a native Windows path (C:\Users\me) stays all-`\`
       // instead of rendering the mixed C:\Users\me/ . A path already ending in
       // its separator (e.g. a drive/filesystem root) is left as-is; the trailing
-      // separator is a no-op for the auto-drill effect below (which keys on `/`).
-      if (!preserveInput) {
-        // `\` is a separator ONLY on a Windows-shaped path (drive-letter `C:...`
-        // or UNC `\\...`); on POSIX it is a legal filename character, so always
-        // append `/` there (GPT 5.6: never treat a trailing `\` as a separator on
-        // a POSIX path). A path already ending in its separator is left as-is.
-        const isWin = /^[A-Za-z]:/.test(d.path) || d.path.startsWith('\\\\')
-        const sep = isWin ? '\\' : '/'
-        setInput(d.path.endsWith(sep) ? d.path : d.path + sep)
-      }
+      // separator is a no-op for the auto-drill effect below.
+      if (!preserveInput) setInput(withTrailingSep(d.path))
       // Keep the combobox input focused so arrow/Enter nav continues after a drill.
       requestAnimationFrame(() => inputRef.current?.focus())
     }).catch(() => {})
@@ -90,17 +90,10 @@ export default function ProjectPicker({ open, onOpenChange, anchorRef, anchorRec
 
   const select = (path: string) => {
     // The browse input carries a trailing delimiter for typing continuation
-    // (#1196); the committed project path must stay clean. `\` is a separator
-    // ONLY on a Windows-shaped path (drive-letter `C:...` or UNC `\\...`); on
-    // POSIX it is a legal filename char, so only `/` is stripped there and a real
-    // trailing `\` is preserved (GPT 5.6). Bare roots stay intact: POSIX `/` and a
-    // Windows drive root `C:\` / `C:/` (stripping `C:/` to `C:` would yield a
-    // drive-RELATIVE path, not the drive root).
-    const isWin = /^[A-Za-z]:/.test(path) || path.startsWith('\\\\')
-    const clean = isWin
-      ? (/^[A-Za-z]:[\\/]$/.test(path) ? path : path.replace(/[\\/]+$/, ''))
-      : (path.replace(/\/+$/, '') || '/')
-    onSelect(clean); onOpenChange(false)
+    // (#1196); the committed project path must stay clean. Roots are preserved
+    // intact — POSIX `/`, and a Windows drive root `C:\` / `C:/` (stripping
+    // `C:/` to `C:` would yield a drive-RELATIVE path, not the drive root).
+    onSelect(stripTrailingSep(path)); onOpenChange(false)
   }
   const rq = recentQuery.trim().toLowerCase()
   const filteredRecent = rq ? recentDirs.filter(d => d.toLowerCase().includes(rq)) : recentDirs
@@ -119,20 +112,23 @@ export default function ProjectPicker({ open, onOpenChange, anchorRef, anchorRec
   useEffect(() => { recentNav.setSelected(0) }, [recentQuery]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset the Browse highlight whenever the visible list changes (tab switch,
-  // drill into a new dir, or filter edit).
-  useEffect(() => { setBrowseSel(0) }, [tab, input, browsePath])
+  // drill into a new dir, entering/leaving the drives level, or filter edit).
+  useEffect(() => { setBrowseSel(0) }, [tab, input, browsePath, showRoots])
 
-  // Auto-drill on a typed trailing slash. Without this, typing "/foo/bar/" only
-  // filters the *current* directory's children by the last segment — the list
-  // never descends into the typed subdirectory. When the input ends with "/"
-  // (and differs from the dir we've already loaded), browse into it. Debounced
-  // so intermediate keystrokes before the slash don't each fire a request.
+  // Auto-drill on a typed trailing separator. Without this, typing "/foo/bar/"
+  // only filters the *current* directory's children by the last segment — the
+  // list never descends into the typed subdirectory. The trigger is the
+  // separator native to what was typed, so a Windows user typing `D:\` or
+  // `D:\Kiro\` navigates there; on a POSIX-shaped path only `/` counts, since
+  // `\` is a legal filename character. Debounced so intermediate keystrokes
+  // before the separator don't each fire a request.
   useEffect(() => {
     if (!open || tab !== 'browse') return
     const trimmed = input.trim()
-    if (!trimmed.endsWith('/') || trimmed.length <= 1) return
-    // Strip the trailing slash to get the target dir; skip if it's already loaded.
-    const target = trimmed.replace(/\/+$/, '') || '/'
+    if (!endsWithSep(trimmed) || trimmed.length <= 1) return
+    // Strip the trailing separator to get the target dir; skip if it's already
+    // loaded. A bare drive root (`D:\`) survives stripping and is a valid target.
+    const target = stripTrailingSep(trimmed)
     if (target === browsePath) return
     const t = setTimeout(() => browse(target, true), 250)
     return () => clearTimeout(t)
@@ -149,7 +145,15 @@ export default function ProjectPicker({ open, onOpenChange, anchorRef, anchorRec
   if (!open || !anchorR) return null
 
   const q = input.toLowerCase()
-  const filteredBrowse = q && q !== browsePath.toLowerCase() ? browseDirs.filter(d => d.name.toLowerCase().includes(q.split('/').pop() || '') || d.path.toLowerCase().includes(q)) : browseDirs
+  const filteredBrowse = q && q !== browsePath.toLowerCase() ? browseDirs.filter(d => d.name.toLowerCase().includes(lastSegment(q)) || d.path.toLowerCase().includes(q)) : browseDirs
+  // A host with more than one filesystem root (i.e. Windows, with a root per
+  // drive) needs a level ABOVE the drive roots, because `C:\` has no parent and
+  // `D:\` is not reachable by walking up from it. POSIX reports the single `/`,
+  // so this affordance never appears there and its root behavior is unchanged.
+  const hasDrivesLevel = fsRoots.length > 1
+  // The drives level shows every root unfiltered — the list is short and the
+  // typed input at that moment is the path being replaced, not a filter over it.
+  const visibleItems = showRoots ? fsRoots : filteredBrowse
 
   return createPortal(
     <div ref={dropRef} className="fixed z-[9999] bg-bg-elevated border border-border rounded-xl shadow-xl w-[400px] flex flex-col overflow-hidden animate-slide-up" style={(() => {
@@ -212,7 +216,7 @@ export default function ProjectPicker({ open, onOpenChange, anchorRef, anchorRec
               >
                 <FolderOpen size={12} className="text-accent shrink-0" />
                 <div className="flex-1 min-w-0">
-                  <div className="text-[13px] font-mono font-semibold text-text truncate">{d.split('/').pop()}</div>
+                  <div className="text-[13px] font-mono font-semibold text-text truncate">{lastSegment(d)}</div>
                   <div className="text-[11px] text-muted truncate">{d}</div>
                 </div>
               </button>
@@ -222,9 +226,11 @@ export default function ProjectPicker({ open, onOpenChange, anchorRef, anchorRec
       ) : (
         <>
           <div className="p-2 border-b border-border flex gap-1 items-center">
-            {browseParent && browseParent !== browsePath && (
+            {showRoots ? null : atRoot && hasDrivesLevel ? (
+              <button aria-label={i18nT('components.projectPicker.this_pc')} onClick={() => { setShowRoots(true); setBrowseSel(0) }} className="p-1 text-muted hover:text-text rounded hover:bg-bg-hover shrink-0" title={i18nT('components.projectPicker.this_pc')}><MonitorSmartphone className="lucide-inline" /></button>
+            ) : browseParent && browseParent !== browsePath ? (
               <button aria-label={i18nT('components.projectPicker.back')} onClick={() => browse(browseParent)} className="p-1 text-muted hover:text-text rounded hover:bg-bg-hover shrink-0" title={i18nT('components.projectPicker.back')}><ChevronLeft size={16} /></button>
-            )}
+            ) : null}
             <input
               ref={inputRef}
               autoFocus
@@ -233,23 +239,26 @@ export default function ProjectPicker({ open, onOpenChange, anchorRef, anchorRec
               aria-expanded={true}
               aria-label={i18nT('components.projectPicker.project_directory_path')}
               aria-controls="pp-browse-list"
-              aria-activedescendant={filteredBrowse.length ? `pp-dir-${browseSel}` : undefined}
+              aria-activedescendant={visibleItems.length ? `pp-dir-${browseSel}` : undefined}
               placeholder={i18nT('components.projectPicker.path_to_project')}
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => {
-                const n = filteredBrowse.length
+                const n = visibleItems.length
                 const commit = () => { const p = input.trim() || browsePath; if (p) select(p) }
                 if (e.key === 'ArrowDown') { e.preventDefault(); setBrowseSel(s => (n ? Math.min(s + 1, n - 1) : 0)) }
                 else if (e.key === 'ArrowUp') { e.preventDefault(); setBrowseSel(s => Math.max(s - 1, 0)) }
                 else if (e.key === 'Enter') {
                   e.preventDefault()
                   if (e.metaKey || e.ctrlKey) commit()                               // ⌘/Ctrl+Enter commits the current dir
-                  else if (n > 0 && filteredBrowse[browseSel]) browse(filteredBrowse[browseSel].path)  // Enter drills into the highlighted folder
+                  else if (n > 0 && visibleItems[browseSel]) browse(visibleItems[browseSel].path)  // Enter drills into the highlighted folder (or drive)
                   else commit()                                                       // nothing to drill into -> commit typed path
                 }
-                else if (e.key === 'ArrowLeft' && e.currentTarget.selectionStart === 0 && e.currentTarget.selectionEnd === 0 && browseParent && browseParent !== browsePath) {
-                  e.preventDefault(); browse(browseParent)                            // caret at start -> go to parent
+                else if (e.key === 'ArrowLeft' && e.currentTarget.selectionStart === 0 && e.currentTarget.selectionEnd === 0 && !showRoots) {
+                  // Caret at start -> go up: to the parent, or to the drives
+                  // level when this listing is a root that has no parent.
+                  if (atRoot && hasDrivesLevel) { e.preventDefault(); setShowRoots(true); setBrowseSel(0) }
+                  else if (browseParent && browseParent !== browsePath) { e.preventDefault(); browse(browseParent) }
                 }
                 else if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); onOpenChange(false); btnRef?.current?.focus() }
               }}
@@ -257,9 +266,9 @@ export default function ProjectPicker({ open, onOpenChange, anchorRef, anchorRec
             />
             <button disabled={!input.trim() && !browsePath} onMouseDown={e => { e.preventDefault(); select(input.trim() || browsePath) }} className="px-2 py-1 text-[11px] bg-accent/20 text-accent rounded hover:bg-accent/30 disabled:opacity-40 disabled:cursor-not-allowed shrink-0">{i18nT('components.projectPicker.select')}</button>
           </div>
-          <div id="pp-browse-list" role="listbox" aria-label={i18nT('components.projectPicker.subdirectories')} className="overflow-y-auto flex-1 min-h-0">
-            {filteredBrowse.length === 0 && <div className="px-3 py-4 text-[12px] text-muted text-center">{i18nT('components.projectPicker.no_subdirectories')}</div>}
-            {filteredBrowse.map((d, i) => (
+          <div id="pp-browse-list" role="listbox" aria-label={showRoots ? i18nT('components.projectPicker.this_pc') : i18nT('components.projectPicker.subdirectories')} className="overflow-y-auto flex-1 min-h-0">
+            {visibleItems.length === 0 && <div className="px-3 py-4 text-[12px] text-muted text-center">{i18nT('components.projectPicker.no_subdirectories')}</div>}
+            {visibleItems.map((d, i) => (
               <button
                 key={d.path}
                 role="option"
@@ -271,7 +280,7 @@ export default function ProjectPicker({ open, onOpenChange, anchorRef, anchorRec
                 onMouseEnter={() => setBrowseSel(i)}
                 onClick={() => browse(d.path)}
               >
-                <FolderOpen size={12} className="text-accent shrink-0" />
+                {showRoots ? <HardDrive className="lucide-inline text-accent shrink-0" /> : <FolderOpen size={12} className="text-accent shrink-0" />}
                 <span className="text-[13px] font-mono text-text truncate">{d.name}</span>
                 <ChevronRight size={12} className="text-muted ml-auto shrink-0" />
               </button>

@@ -5389,7 +5389,8 @@
       "search_recent_projects": "Pesquisar projetos recentes",
       "search_recent_projects_2": "Pesquisar projetos recentes…",
       "select": "Selecionar",
-      "subdirectories": "Subdiretórios"
+      "subdirectories": "Subdiretórios",
+      "this_pc": "Este computador"
     },
     "publishHub": {
       "back": "Voltar",
@@ -6153,6 +6154,7 @@
       "path_to_project": "/path/to/project",
       "project_directory_path": "Caminho do diretório do projeto",
       "select": "Selecionar",
+      "this_pc": "Este computador",
       "workspace_name": "Nome do espaço de trabalho",
       "workspace_name_2": "workspace-name"
     },
